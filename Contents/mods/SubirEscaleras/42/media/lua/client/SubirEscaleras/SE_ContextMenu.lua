@@ -1,0 +1,133 @@
+--
+-- Subir Escaleras - menu contextual
+-- Build 42.20
+--
+
+require "TimedActions/WalkToTimedAction"
+require "SubirEscaleras/SE_Utils"
+require "SubirEscaleras/SE_ClimbAction"
+
+local function makeTooltip(text)
+    local tooltip = ISWorldObjectContextMenu.addToolTip()
+    tooltip.description = text
+    return tooltip
+end
+
+local function onClimb(worldobjects, playerNum, ladder, ladderSquare, startSquare, target, down)
+    local playerObj = getSpecificPlayer(playerNum)
+    if not playerObj then return end
+    ISTimedActionQueue.clear(playerObj)
+    if startSquare and playerObj:getCurrentSquare() ~= startSquare then
+        ISTimedActionQueue.add(ISWalkToTimedAction:new(playerObj, startSquare))
+    end
+    ISTimedActionQueue.add(ISSubirEscaleraAction:new(playerObj, ladder, ladderSquare,
+        startSquare, target, down))
+end
+
+--- Vuelca todo lo que haya en 3x3 casillas y 3 niveles alrededor de donde se
+--- ha pinchado. Asi no hace falta acertar la casilla exacta de la escalera.
+local function onDump(worldobjects, playerNum, square)
+    local cell = getCell()
+    local x0, y0, z0 = square:getX(), square:getY(), square:getZ()
+    print(string.format("[SubirEscaleras] ===== volcado alrededor de %d,%d,%d =====", x0, y0, z0))
+
+    for dz = -1, 1 do
+        for dy = -1, 1 do
+            for dx = -1, 1 do
+                local sq = cell:getGridSquare(x0 + dx, y0 + dy, z0 + dz)
+                if sq then
+                    local objects = sq:getObjects()
+                    for i = 0, objects:size() - 1 do
+                        local object = objects:get(i)
+                        local sprite = object:getSprite()
+                        local name = sprite and sprite:getName()
+                        if name then
+                            print(string.format("[SubirEscaleras] %d,%d,%d | %s | trepable=%s",
+                                sq:getX(), sq:getY(), sq:getZ(), name,
+                                tostring(SubirEscaleras.getClimbDir(object))))
+                        end
+                    end
+                end
+            end
+        end
+    end
+    print("[SubirEscaleras] ===== fin del volcado =====")
+end
+
+--- Distancia en casillas ignorando la altura.
+local function isNearColumn(squareA, squareB)
+    return math.abs(squareA:getX() - squareB:getX()) <= 1
+        and math.abs(squareA:getY() - squareB:getY()) <= 1
+end
+
+local function addUpOption(context, worldobjects, playerNum, playerSquare, ladder, dir, ladderSquare)
+    local target, exact = SubirEscaleras.getTargetSquare(ladderSquare, false, dir)
+
+    if target then
+        context:addOption("Subir por la escalera", worldobjects, onClimb, playerNum,
+            ladder, ladderSquare, ladderSquare, target, false)
+        return
+    end
+
+    local option = context:addOption("Subir por la escalera", worldobjects, nil)
+    option.notAvailable = true
+    if not exact then
+        option.toolTip = makeTooltip("No hay ningun nivel cargado encima de la escalera.")
+    else
+        option.toolTip = makeTooltip("Arriba no hay ningun sitio con suelo donde salir. " ..
+            "Construye un suelo en el nivel de arriba, sobre la escalera o justo al lado.")
+    end
+end
+
+local function addDownOption(context, worldobjects, playerNum, playerSquare, ladder, dir, ladderSquare)
+    -- al bajar, el destino es el propio nivel de la escalera
+    local target = SubirEscaleras.getTargetSquare(ladderSquare, true, dir)
+    if not target then return end
+
+    -- de donde salimos: lo alto de la escalera, al nivel del jugador
+    local startSquare = SubirEscaleras.findLanding(ladderSquare:getX(), ladderSquare:getY(),
+        playerSquare:getZ(), dir)
+    if not startSquare then startSquare = playerSquare end
+
+    context:addOption("Bajar por la escalera", worldobjects, onClimb, playerNum,
+        ladder, ladderSquare, startSquare, target, true)
+end
+
+local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, test)
+    if test then return end
+
+    local playerObj = getSpecificPlayer(playerNum)
+    if not playerObj or playerObj:isDead() then return end
+
+    local playerSquare = playerObj:getCurrentSquare()
+    if not playerSquare then return end
+
+    local square = nil
+    for _, object in ipairs(worldobjects) do
+        if object:getSquare() then
+            square = object:getSquare()
+            break
+        end
+    end
+    if not square then return end
+
+    if SubirEscaleras.debug then
+        context:addOption("[Escaleras] Volcar info a la consola", worldobjects, onDump, playerNum, square)
+    end
+
+    local z = playerSquare:getZ()
+
+    -- escalera a la altura del jugador -> subir
+    local ladder, dir, ladderSquare = SubirEscaleras.findLadderNear(square:getX(), square:getY(), z)
+    if ladder and isNearColumn(playerSquare, ladderSquare) then
+        addUpOption(context, worldobjects, playerNum, playerSquare, ladder, dir, ladderSquare)
+    end
+
+    -- escalera un nivel por debajo -> bajar
+    local ladderD, dirD, ladderSquareD = SubirEscaleras.findLadderNear(square:getX(), square:getY(), z - 1)
+    if ladderD and isNearColumn(playerSquare, ladderSquareD) then
+        addDownOption(context, worldobjects, playerNum, playerSquare, ladderD, dirD, ladderSquareD)
+    end
+end
+
+Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)
