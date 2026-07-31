@@ -77,7 +77,7 @@ function ISSubirEscaleraAction:perform()
             self.character:climbSheetRope()
         end
     else
-        SubirEscaleras.movePlayerTo(self.character, self.target)
+        SubirEscaleras.moveSafely(self.character, self.target, current)
     end
 
     self.character:getStats():remove(CharacterStat.ENDURANCE,

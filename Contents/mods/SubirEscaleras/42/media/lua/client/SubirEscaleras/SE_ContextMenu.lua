@@ -31,6 +31,30 @@ local function onDump(worldobjects, playerNum, square)
     local x0, y0, z0 = square:getX(), square:getY(), square:getZ()
     print(string.format("[SubirEscaleras] ===== volcado alrededor de %d,%d,%d =====", x0, y0, z0))
 
+    local playerObj = getSpecificPlayer(playerNum)
+    if playerObj then
+        local ps = playerObj:getCurrentSquare()
+        print(string.format("[SubirEscaleras] JUGADOR pos=%.2f,%.2f,%.2f cuadro=%s pisable=%s",
+            playerObj:getX(), playerObj:getY(), playerObj:getZ(),
+            ps and string.format("%d,%d,%d", ps:getX(), ps:getY(), ps:getZ()) or "nil",
+            ps and tostring(SubirEscaleras.isStandable(ps)) or "nil"))
+    end
+
+    -- que ve el mod desde aqui
+    local ladder, dir, ls = SubirEscaleras.findLadderNear(x0, y0, z0)
+    if not ladder then ladder, dir, ls = SubirEscaleras.findLadderNear(x0, y0, z0 - 1) end
+    if ladder and ls then
+        print(string.format("[SubirEscaleras] ESCALERA en %d,%d,%d dir=%s",
+            ls:getX(), ls:getY(), ls:getZ(), tostring(dir)))
+        local up = SubirEscaleras.getTargetSquare(ls, false, dir)
+        local down = SubirEscaleras.getTargetSquare(ls, true, dir)
+        print(string.format("[SubirEscaleras] DESTINO subir=%s  bajar=%s",
+            up and string.format("%d,%d,%d", up:getX(), up:getY(), up:getZ()) or "nil",
+            down and string.format("%d,%d,%d", down:getX(), down:getY(), down:getZ()) or "nil"))
+    else
+        print("[SubirEscaleras] ESCALERA no encontrada cerca")
+    end
+
     for dz = -1, 1 do
         for dy = -1, 1 do
             for dx = -1, 1 do

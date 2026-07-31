@@ -17,6 +17,21 @@ Para **bajar** no hace falta ver la escalera: ponte arriba, a un cuadro o menos
 del hueco por el que sube, y haz clic derecho en el suelo → *Bajar por la
 escalera*. El mod busca la escalera un nivel por debajo de ti.
 
+## Con el teclado
+
+**Mantén pulsada la E** junto a una escalera y sube o baja por ella sin abrir el
+menú. Sube si la escalera está a tu altura, baja si está justo debajo.
+
+Se exige mantenerla, y no un toque, porque `E` es la tecla *Interact* del juego
+(`keyBinding.lua:32`): con un toque abrirías a la vez la puerta o la ventana que
+tengas al lado. El retardo son `SubirEscaleras.holdTicks` fotogramas — 20 por
+defecto, algo menos de medio segundo. Una sola subida por pulsación: para repetir
+hay que soltar y volver a pulsar.
+
+Rebindeable en **Opciones → Controles → Subir Escaleras**. El nombre visible sale
+de `getText("UI_optionscreen_binding_" .. value)` (`MainOptions.lua:2182`), por
+eso el identificador es ASCII y el texto está en `media/lua/shared/Translate/`.
+
 ## Cómo funciona
 
 - Detecta la escalera leyendo las propiedades del sprite en caliente, en este

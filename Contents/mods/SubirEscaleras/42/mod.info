@@ -3,5 +3,5 @@ id=SubirEscaleras
 description=Anade la opcion de clic derecho "Subir / Bajar" en cualquier escalera del juego, incluidas las que colocas tu mismo. Build 42.
 author=Vlan
 versionMin=42.0
-modVersion=1.0
+modVersion=1.2
 tags=Building,Misc

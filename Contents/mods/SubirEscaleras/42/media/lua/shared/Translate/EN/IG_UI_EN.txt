@@ -1,0 +1,3 @@
+IG_UI_EN = {
+    IGUI_SubirEscaleras_Inseguro = "There's nothing to hold on to up there.",
+}

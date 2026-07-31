@@ -7,13 +7,18 @@ SubirEscaleras = SubirEscaleras or {}
 
 -- Ponlo en true para que aparezca la opcion "[Escaleras] Volcar info a la
 -- consola" en el menu de clic derecho. Escribe en C:\Users\<usuario>\Zomboid\console.txt
-SubirEscaleras.debug = true
+SubirEscaleras.debug = false
 
 -- Tiempo (en ticks de accion) que tarda el personaje en subir o bajar.
 SubirEscaleras.climbTime = 80
 
 -- Cansancio que cuesta cada tramo de escalera.
 SubirEscaleras.enduranceCost = 0.03
+
+-- Fotogramas que hay que mantener pulsada la tecla para que empiece a trepar.
+-- Se pide mantenerla, y no un toque, para no pisar la interaccion normal de E
+-- (abrir puertas, pasar por ventanas). Unos 20 son algo menos de medio segundo.
+SubirEscaleras.holdTicks = 20
 
 --
 -- RED DE SEGURIDAD, no la via principal.
@@ -31,8 +36,7 @@ SubirEscaleras.enduranceCost = 0.03
 --
 -- Varias de estas NO traen la propiedad climbSheet* en el juego base, que es
 -- justo el motivo de que el motor no te deje treparlas. Por eso el mod no se
--- fia de las banderas: reconoce la escalera por el nombre del sprite y hace
--- el movimiento por su cuenta.
+-- fia solo de las banderas y hace el movimiento por su cuenta.
 --
 SubirEscaleras.ladderSprites = {
     ["industry_railroad_05_20"] = "W",  -- escalera metalica movible (madera)
@@ -151,11 +155,17 @@ function SubirEscaleras.findLadder(square)
 end
 
 --- true si el personaje puede quedarse de pie en ese cuadro.
+---
+--- Usa TreatAsSolidFloor(), la misma comprobacion con la que el juego decide
+--- si puedes caminar a un cuadro (ver ISWalkToCursor:isValid en el Lua base).
+--- Antes se usaba getFloor() ~= nil, que da falsos positivos: hay cuadros con
+--- un objeto de suelo que aun asi no te sostienen. Por eso un jugador acabo
+--- cayendo desde arriba y murio.
 function SubirEscaleras.isStandable(square)
     if not square then return false end
-    if square:getZ() > 0 and not square:getFloor() then return false end
     if square:isSolid() then return false end
     if square:isSolidTrans() then return false end
+    if not square:TreatAsSolidFloor() then return false end
     return true
 end
 
@@ -178,14 +188,34 @@ function SubirEscaleras.findLanding(x, y, z, dir)
         table.insert(candidates, offset)
     end
 
+    -- Primera pasada: solo cuadros a los que de verdad se puede salir desde la
+    -- escalera. isSomethingTo dice si hay una pared, ventana o puerta entre dos
+    -- cuadros contiguos; sin esta comprobacion el personaje acaba metido dentro
+    -- del muro y el motor lo expulsa al primer paso que da.
+    local fallback = nil
+
     for _, offset in ipairs(candidates) do
         local square = cell:getGridSquare(x + offset[1], y + offset[2], z)
         if SubirEscaleras.isStandable(square) then
-            return square, exact
+            local sameSquare = offset[1] == 0 and offset[2] == 0
+            local blocked = false
+
+            if not sameSquare and exact then
+                local ok, result = pcall(function() return exact:isSomethingTo(square) end)
+                blocked = ok and result
+            end
+
+            if sameSquare or not blocked then
+                return square, exact
+            end
+
+            fallback = fallback or square
         end
     end
 
-    return nil, exact
+    -- Segunda pasada: si todas las salidas estan tapiadas, mejor dejarlo en una
+    -- con suelo que no ofrecer nada. Se movera raro, pero no se cae.
+    return fallback, exact
 end
 
 --- Recorre la columna mientras siga habiendo escalera y devuelve el z del
@@ -257,18 +287,56 @@ function SubirEscaleras.movePlayerTo(character, square)
     local y = square:getY() + 0.5
     local z = square:getZ()
 
-    local ok = pcall(function() character:teleportTo(x, y, z) end)
-    if not ok then
-        character:setX(x)
-        character:setY(y)
-        character:setZ(z)
-        pcall(function()
-            character:setLx(x)
-            character:setLy(y)
-            character:setLz(z)
-        end)
-    end
+    -- Primero el cuadro y despues la posicion, nunca al reves: setCurrent deja
+    -- al personaje en el origen del cuadro (x.0, y.0), que es la esquina noroeste
+    -- y suele coincidir con la pared. Si se llama despues de centrarlo, lo
+    -- descoloca y aparece metido dentro del muro hasta que da un paso.
     pcall(function() character:setCurrent(square) end)
+
+    local ok = pcall(function() character:teleportTo(x, y, z) end)
+
+    -- El centrado se fuerza SIEMPRE, no solo si teleportTo falla: tanto
+    -- setCurrent como teleportTo dejan al personaje en el origen del cuadro
+    -- (x.0, y.0), que es la esquina noroeste y suele ser la pared.
+    character:setX(x)
+    character:setY(y)
+    character:setZ(z)
+
+    if SubirEscaleras.debug then
+        print(string.format("[SubirEscaleras] movido a %d,%d,%d teleportTo=%s pos=%.2f,%.2f,%.2f",
+            square:getX(), square:getY(), square:getZ(), tostring(ok),
+            character:getX(), character:getY(), character:getZ()))
+    end
+end
+
+--- Mueve al personaje y lo vigila un momento. Si acaba en un cuadro donde no
+--- se puede pisar (o sea, se ha puesto a caer), lo devuelve al punto de
+--- partida en vez de dejarlo estamparse. Red de seguridad: la comprobacion
+--- previa del destino deberia bastar, pero una caida mata.
+function SubirEscaleras.moveSafely(character, target, origin)
+    SubirEscaleras.movePlayerTo(character, target)
+    if not origin then return end
+
+    local ticks = 0
+    local watchdog
+    watchdog = function()
+        ticks = ticks + 1
+        local square = character:getCurrentSquare()
+
+        if square and not SubirEscaleras.isStandable(square) then
+            SubirEscaleras.movePlayerTo(character, origin)
+            print("[SubirEscaleras] destino inseguro, devuelto al punto de partida")
+            character:Say(getText("IGUI_SubirEscaleras_Inseguro"))
+            Events.OnTick.Remove(watchdog)
+            return
+        end
+
+        if ticks >= 30 then
+            Events.OnTick.Remove(watchdog)
+        end
+    end
+
+    Events.OnTick.Add(watchdog)
 end
 
 --- Vuelca en consola todo lo que hay en el cuadro (modo debug).
