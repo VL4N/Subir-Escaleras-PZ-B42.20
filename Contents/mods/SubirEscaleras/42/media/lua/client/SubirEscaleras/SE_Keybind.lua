@@ -13,6 +13,10 @@
 -- Por eso el identificador es ASCII y el texto visible va en Translate/.
 --
 
+-- Un servidor no tiene teclado ni tabla keyBinding que ampliar, y los eventos
+-- OnKey* no existen ahi. Salimos antes de tocar nada.
+if isServer() then return end
+
 require "SubirEscaleras/SE_Utils"
 require "SubirEscaleras/SE_ClimbAction"
 require "TimedActions/WalkToTimedAction"
@@ -56,6 +60,12 @@ local function climbNow()
 
     local ladder, dir, ladderSquare, down = findLadderForPlayer(playerSquare)
     if not ladder then return end
+
+    local canClimb, reason = SubirEscaleras.canClimb(playerObj, down)
+    if not canClimb then
+        playerObj:Say(getText(reason))
+        return
+    end
 
     local target = SubirEscaleras.getTargetSquare(ladderSquare, down, dir)
     if not target then

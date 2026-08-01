@@ -3,6 +3,10 @@
 -- Build 42.20
 --
 
+-- Nada de esto tiene sentido en un servidor: ni hay menu contextual ni existe
+-- el evento. Salimos antes de los require, que tambien son de cliente.
+if isServer() then return end
+
 require "TimedActions/WalkToTimedAction"
 require "SubirEscaleras/SE_Utils"
 require "SubirEscaleras/SE_ClimbAction"
@@ -85,21 +89,31 @@ local function isNearColumn(squareA, squareB)
 end
 
 local function addUpOption(context, worldobjects, playerNum, playerSquare, ladder, dir, ladderSquare)
+    local playerObj = getSpecificPlayer(playerNum)
+
+    -- estado del personaje antes que nada: si no puede subir, da igual el destino
+    local canClimb, reason = SubirEscaleras.canClimb(playerObj, false)
+    if not canClimb then
+        local blocked = context:addOption(getText("ContextMenu_SubirEscaleras_Up"), worldobjects, nil)
+        blocked.notAvailable = true
+        blocked.toolTip = makeTooltip(getText(reason))
+        return
+    end
+
     local target, exact = SubirEscaleras.getTargetSquare(ladderSquare, false, dir)
 
     if target then
-        context:addOption("Subir por la escalera", worldobjects, onClimb, playerNum,
+        context:addOption(getText("ContextMenu_SubirEscaleras_Up"), worldobjects, onClimb, playerNum,
             ladder, ladderSquare, ladderSquare, target, false)
         return
     end
 
-    local option = context:addOption("Subir por la escalera", worldobjects, nil)
+    local option = context:addOption(getText("ContextMenu_SubirEscaleras_Up"), worldobjects, nil)
     option.notAvailable = true
     if not exact then
-        option.toolTip = makeTooltip("No hay ningun nivel cargado encima de la escalera.")
+        option.toolTip = makeTooltip(getText("IGUI_SubirEscaleras_SinNivel"))
     else
-        option.toolTip = makeTooltip("Arriba no hay ningun sitio con suelo donde salir. " ..
-            "Construye un suelo en el nivel de arriba, sobre la escalera o justo al lado.")
+        option.toolTip = makeTooltip(getText("IGUI_SubirEscaleras_SinSalida"))
     end
 end
 
@@ -113,7 +127,7 @@ local function addDownOption(context, worldobjects, playerNum, playerSquare, lad
         playerSquare:getZ(), dir)
     if not startSquare then startSquare = playerSquare end
 
-    context:addOption("Bajar por la escalera", worldobjects, onClimb, playerNum,
+    context:addOption(getText("ContextMenu_SubirEscaleras_Down"), worldobjects, onClimb, playerNum,
         ladder, ladderSquare, startSquare, target, true)
 end
 
@@ -136,19 +150,31 @@ local function onFillWorldObjectContextMenu(playerNum, context, worldobjects, te
     if not square then return end
 
     if SubirEscaleras.debug then
-        context:addOption("[Escaleras] Volcar info a la consola", worldobjects, onDump, playerNum, square)
+        context:addOption(getText("ContextMenu_SubirEscaleras_Dump"), worldobjects, onDump, playerNum, square)
     end
 
     local z = playerSquare:getZ()
 
+    --- Busca alrededor de donde se ha pinchado y, si ahi no hay nada, alrededor
+    --- del propio jugador. Las escaleras altas pegadas al norte o al oeste
+    --- dibujan su sprite lejos de su casilla real y son dificiles de acertar
+    --- con el raton; si estas al lado de una, la opcion sale igual.
+    local function findLadderAt(level)
+        local ladder, dir, ladderSquare = SubirEscaleras.findLadderNear(
+            square:getX(), square:getY(), level)
+        if ladder then return ladder, dir, ladderSquare end
+
+        return SubirEscaleras.findLadderNear(playerSquare:getX(), playerSquare:getY(), level)
+    end
+
     -- escalera a la altura del jugador -> subir
-    local ladder, dir, ladderSquare = SubirEscaleras.findLadderNear(square:getX(), square:getY(), z)
+    local ladder, dir, ladderSquare = findLadderAt(z)
     if ladder and isNearColumn(playerSquare, ladderSquare) then
         addUpOption(context, worldobjects, playerNum, playerSquare, ladder, dir, ladderSquare)
     end
 
     -- escalera un nivel por debajo -> bajar
-    local ladderD, dirD, ladderSquareD = SubirEscaleras.findLadderNear(square:getX(), square:getY(), z - 1)
+    local ladderD, dirD, ladderSquareD = findLadderAt(z - 1)
     if ladderD and isNearColumn(playerSquare, ladderSquareD) then
         addDownOption(context, worldobjects, playerNum, playerSquare, ladderD, dirD, ladderSquareD)
     end

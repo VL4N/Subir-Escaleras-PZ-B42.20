@@ -81,7 +81,7 @@ function ISSubirEscaleraAction:perform()
     end
 
     self.character:getStats():remove(CharacterStat.ENDURANCE,
-        SubirEscaleras.enduranceCost * self.levels)
+        SubirEscaleras.enduranceCost * self.levels * self.load)
 
     ISBaseTimedAction.perform(self)
 end
@@ -98,7 +98,10 @@ function ISSubirEscaleraAction:new(character, ladder, ladderSquare, startSquare,
     local fromZ = (startSquare or ladderSquare):getZ()
     o.levels = math.max(1, math.abs(target:getZ() - fromZ))
 
-    o.maxTime = SubirEscaleras.climbTime * o.levels
+    -- ir pasado de peso lo hace mas lento y mas cansado
+    o.load = SubirEscaleras.getLoadFactor(character)
+
+    o.maxTime = SubirEscaleras.climbTime * o.levels * o.load
     if character:isTimedActionInstant() then o.maxTime = 1 end
     o.stopOnWalk = true
     o.stopOnRun = true

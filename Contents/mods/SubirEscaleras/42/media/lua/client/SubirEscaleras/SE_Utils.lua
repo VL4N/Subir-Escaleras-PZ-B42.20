@@ -15,6 +15,15 @@ SubirEscaleras.climbTime = 80
 -- Cansancio que cuesta cada tramo de escalera.
 SubirEscaleras.enduranceCost = 0.03
 
+-- Impide trepar hacia arriba con una pierna o un pie rotos sin entablillar.
+SubirEscaleras.blockIfInjured = true
+
+-- Aliento minimo para empezar a subir (1 = descansado, 0 = reventado).
+SubirEscaleras.minEndurance = 0.10
+
+-- Cuanto mas cuesta subir yendo pasado de peso, como maximo.
+SubirEscaleras.overloadPenalty = 2.0
+
 -- Fotogramas que hay que mantener pulsada la tecla para que empiece a trepar.
 -- Se pide mantenerla, y no un toque, para no pisar la interaccion normal de E
 -- (abrir puertas, pasar por ventanas). Unos 20 son algo menos de medio segundo.
@@ -126,6 +135,59 @@ function SubirEscaleras.getClimbDir(object)
     end
 
     return nil
+end
+
+local legParts = {
+    BodyPartType.Foot_L,     BodyPartType.Foot_R,
+    BodyPartType.LowerLeg_L, BodyPartType.LowerLeg_R,
+    BodyPartType.UpperLeg_L, BodyPartType.UpperLeg_R,
+}
+
+--- true si tiene una pierna o un pie rotos y sin entablillar.
+--- Entablillada no cuenta: el juego ya distingue los dos casos
+--- (ver ISHealthPanel.lua:740).
+function SubirEscaleras.hasBrokenLeg(character)
+    local damage = character:getBodyDamage()
+    if not damage then return false end
+
+    for _, partType in ipairs(legParts) do
+        local part = damage:getBodyPart(partType)
+        if part and part:getFractureTime() > 0 and part:getSplintFactor() == 0 then
+            return true
+        end
+    end
+
+    return false
+end
+
+--- Cuanto multiplica el esfuerzo ir cargado. 1 = dentro de capacidad.
+function SubirEscaleras.getLoadFactor(character)
+    local maxWeight = character:getMaxWeight()
+    if not maxWeight or maxWeight <= 0 then return 1 end
+
+    local ratio = character:getInventoryWeight() / maxWeight
+    if ratio <= 1 then return 1 end
+
+    return math.min(SubirEscaleras.overloadPenalty, 1 + (ratio - 1) * 2)
+end
+
+--- Si el personaje puede subir. Devuelve: bool, clave de texto del motivo.
+---
+--- Bajar NUNCA se bloquea, a proposito: dejar a alguien tirado en un tejado sin
+--- forma de bajar es peor que cualquier realismo, y la alternativa seria saltar.
+function SubirEscaleras.canClimb(character, down)
+    if down then return true end
+
+    if SubirEscaleras.blockIfInjured and SubirEscaleras.hasBrokenLeg(character) then
+        return false, "IGUI_SubirEscaleras_Pierna"
+    end
+
+    local endurance = character:getStats():get(CharacterStat.ENDURANCE)
+    if endurance and endurance < SubirEscaleras.minEndurance then
+        return false, "IGUI_SubirEscaleras_Agotado"
+    end
+
+    return true
 end
 
 --- true si el objeto es el remate superior de una escalera.
@@ -270,7 +332,14 @@ end
 --- Devuelve: objeto, direccion, cuadroDeLaEscalera
 function SubirEscaleras.findLadderNear(x, y, z)
     local cell = getCell()
-    local offsets = { { 0, 0 }, { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }
+    -- 3x3 completo. Las escaleras pegadas al borde norte u oeste dibujan su
+    -- sprite sobre el muro, asi que el clic cae en una casilla vecina y no en
+    -- la que ocupa la escalera. Con solo las cuatro cardinales se escapaban.
+    local offsets = {
+        { 0, 0 },
+        { 0, -1 }, { -1, 0 }, { 0, 1 }, { 1, 0 },
+        { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 },
+    }
     for _, offset in ipairs(offsets) do
         local square = cell:getGridSquare(x + offset[1], y + offset[2], z)
         local ladder, dir = SubirEscaleras.findLadder(square)
@@ -321,6 +390,15 @@ function SubirEscaleras.moveSafely(character, target, origin)
     local watchdog
     watchdog = function()
         ticks = ticks + 1
+
+        -- Si el personaje deja de ser valido (muere, se desconecta) hay que
+        -- soltar el evento YA: si no, cada tick lanza un error hasta agotar
+        -- la cuenta, y con varios jugadores eso son cientos de errores.
+        if ticks >= 30 or not character or character:isDead() then
+            Events.OnTick.Remove(watchdog)
+            return
+        end
+
         local square = character:getCurrentSquare()
 
         if square and not SubirEscaleras.isStandable(square) then
@@ -329,10 +407,6 @@ function SubirEscaleras.moveSafely(character, target, origin)
             character:Say(getText("IGUI_SubirEscaleras_Inseguro"))
             Events.OnTick.Remove(watchdog)
             return
-        end
-
-        if ticks >= 30 then
-            Events.OnTick.Remove(watchdog)
         end
     end
 
