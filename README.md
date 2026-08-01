@@ -76,9 +76,30 @@ En `SE_Utils.lua`:
 
 | Variable | Por defecto | Qué hace |
 |---|---|---|
-| `SubirEscaleras.debug` | `false` | Opción de diagnóstico en el menú |
+| `SubirEscaleras.debug` | `false` | Opción de diagnóstico en el menú y mensajes en consola |
 | `SubirEscaleras.climbTime` | `80` | Duración de la acción |
 | `SubirEscaleras.enduranceCost` | `0.03` | Resistencia gastada por tramo |
+| `SubirEscaleras.minEndurance` | `0.10` | Aliento mínimo para empezar a subir |
+| `SubirEscaleras.holdTicks` | `20` | Fotogramas que hay que mantener la tecla |
+| `SubirEscaleras.sayCooldown` | `5000` | Milisegundos antes de repetir la misma frase |
+
+## Ruido en consola
+
+Con `debug` apagado, el mod no escribe **nada** en `console.txt` durante el juego
+normal. Lo único que puede aparecer es un aviso de una sola línea si alguna
+llamada al motor falla (por ejemplo, si una build cambia la forma de leer el
+aliento), y ese aviso no se repite aunque el fallo sí lo haga.
+
+Las frases del personaje ("No me quedan fuerzas para subir") tienen enfriamiento:
+como **E** es también la tecla de interactuar, estando al lado de una escalera se
+pasa por esa comprobación constantemente sin querer trepar, y sin enfriamiento
+salía un bocadillo cada vez.
+
+## Traducciones
+
+Desde la build 42.15 las traducciones son ficheros `.json` **sin** el código de
+idioma en el nombre (`ContextMenu.json`, no `ContextMenu_ES.txt`) y siempre en
+UTF-8. Los `.txt` antiguos ya no se usan.
 
 ## Estructura
 
@@ -88,10 +109,13 @@ SubirEscaleras/
 ├── README.md
 └── 42/
     ├── mod.info
-    └── media/lua/client/SubirEscaleras/
-        ├── SE_Utils.lua        (detección, validación, movimiento)
-        ├── SE_ClimbAction.lua  (acción temporizada)
-        └── SE_ContextMenu.lua  (menú de clic derecho)
+    └── media/lua/
+        ├── client/SubirEscaleras/
+        │   ├── SE_Utils.lua        (detección, validación, movimiento, mensajes)
+        │   ├── SE_ClimbAction.lua  (acción temporizada)
+        │   ├── SE_ContextMenu.lua  (menú de clic derecho)
+        │   └── SE_Keybind.lua      (mantener E para trepar)
+        └── shared/Translate/       (EN, ES, ES_MX, ES_CL)
 ```
 
 ## El fallo del juego base que corrige

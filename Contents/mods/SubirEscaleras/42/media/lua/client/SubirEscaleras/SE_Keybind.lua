@@ -50,10 +50,35 @@ local function findLadderForPlayer(playerSquare)
     return nil
 end
 
+--- true si el jugador esta escribiendo: el chat se come las teclas y no hay que
+--- reaccionar a ellas. Sin esto, escribir una palabra con E estando al lado de
+--- una escalera lanzaba la trepada en mitad de la frase.
+local function isTyping()
+    return ISChat and ISChat.instance and ISChat.instance.textEntry
+        and ISChat.instance.textEntry:isFocused()
+end
+
+--- true si ya se esta trepando. Soltar y volver a mantener E durante la accion
+--- vaciaba la cola y la reiniciaba desde cero una y otra vez.
+local function alreadyClimbing(playerObj)
+    -- Comprobado a mano en vez de con pcall: esto corre en cada pulsacion, y
+    -- si en alguna build faltara el metodo, un error aqui seria justo el tipo
+    -- de goteo en consola que este mod ya no quiere producir.
+    if not ISTimedActionQueue or not ISTimedActionQueue.getTimedActionQueue then
+        return false
+    end
+
+    local queue = ISTimedActionQueue.getTimedActionQueue(playerObj)
+    local current = queue and queue.queue and queue.queue[1]
+    return current ~= nil and current.Type == "ISSubirEscaleraAction"
+end
+
 local function climbNow()
     local playerObj = getSpecificPlayer(0)
     if not playerObj or playerObj:isDead() then return end
     if playerObj:getVehicle() then return end
+    if isTyping() then return end
+    if alreadyClimbing(playerObj) then return end
 
     local playerSquare = playerObj:getCurrentSquare()
     if not playerSquare then return end
@@ -61,15 +86,18 @@ local function climbNow()
     local ladder, dir, ladderSquare, down = findLadderForPlayer(playerSquare)
     if not ladder then return end
 
+    -- A partir de aqui se habla por el personaje, y siempre con enfriamiento:
+    -- E es la tecla de interactuar, asi que estando al lado de una escalera se
+    -- pasa por aqui constantemente sin querer trepar.
     local canClimb, reason = SubirEscaleras.canClimb(playerObj, down)
     if not canClimb then
-        playerObj:Say(getText(reason))
+        SubirEscaleras.say(playerObj, reason)
         return
     end
 
     local target = SubirEscaleras.getTargetSquare(ladderSquare, down, dir)
     if not target then
-        playerObj:Say(getText("IGUI_SubirEscaleras_Inseguro"))
+        SubirEscaleras.say(playerObj, "IGUI_SubirEscaleras_Inseguro")
         return
     end
 
@@ -101,6 +129,7 @@ end
 local function onKeyKeepPressed(key)
     if not isOurKey(key) then return end
     if alreadyFired then return end
+    if isTyping() then return end
 
     heldTicks = heldTicks + 1
     if heldTicks < SubirEscaleras.holdTicks then return end

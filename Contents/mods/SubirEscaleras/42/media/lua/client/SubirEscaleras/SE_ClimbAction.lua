@@ -41,10 +41,20 @@ function ISSubirEscaleraAction:start()
     self:setActionAnim("Loot")
     self:setAnimVariable("LootPosition", self.down and "Low" or "High")
     self:setOverrideHandModels(nil, nil)
+
+    -- Se resuelve una sola vez, aqui. Estaba dentro de update(), que corre en
+    -- cada tick de la accion: si la tabla Metabolics no tuviera esa entrada,
+    -- eran ochenta trazas de error por escalera en vez de una.
+    self.metabolicTarget = Metabolics and Metabolics.ClimbRope or nil
+    if not self.metabolicTarget then
+        SubirEscaleras.warnOnce("metabolics", "Metabolics.ClimbRope no existe; se trepa sin coste metabolico")
+    end
 end
 
 function ISSubirEscaleraAction:update()
-    self.character:setMetabolicTarget(Metabolics.ClimbRope)
+    if self.metabolicTarget then
+        self.character:setMetabolicTarget(self.metabolicTarget)
+    end
 end
 
 function ISSubirEscaleraAction:stop()
@@ -80,7 +90,7 @@ function ISSubirEscaleraAction:perform()
         SubirEscaleras.moveSafely(self.character, self.target, current)
     end
 
-    self.character:getStats():remove(CharacterStat.ENDURANCE,
+    SubirEscaleras.spendEndurance(self.character,
         SubirEscaleras.enduranceCost * self.levels * self.load)
 
     ISBaseTimedAction.perform(self)
@@ -111,8 +121,20 @@ end
 -- Red de seguridad: una version anterior de este mod ponia ClimbRope a true
 -- para reproducir la animacion de trepar. Si algun personaje se quedo con la
 -- variable puesta, seguiria atravesando el suelo. La limpiamos al aparecer.
+--
+-- Va en pcall porque isClimbingRope() no esta garantizado en todas las builds
+-- de B42, y esto corre al entrar en la partida: si peta, revienta el resto de
+-- handlers de OnCreatePlayer que vengan detras, no solo el nuestro.
 Events.OnCreatePlayer.Add(function(playerNum, playerObj)
-    if playerObj and not playerObj:isClimbingRope() then
-        playerObj:setVariable("ClimbRope", false)
+    if not playerObj then return end
+
+    local ok = pcall(function()
+        if not playerObj:isClimbingRope() then
+            playerObj:setVariable("ClimbRope", false)
+        end
+    end)
+
+    if not ok then
+        SubirEscaleras.warnOnce("climbrope", "no se ha podido comprobar ClimbRope al aparecer")
     end
 end)

@@ -29,6 +29,91 @@ SubirEscaleras.overloadPenalty = 2.0
 -- (abrir puertas, pasar por ventanas). Unos 20 son algo menos de medio segundo.
 SubirEscaleras.holdTicks = 20
 
+-- Milisegundos que tiene que pasar para repetir la misma frase del personaje.
+-- E es la tecla de interactuar: si estas al lado de una escalera y agotado,
+-- sin esto sale el bocadillo cada vez que la tocas.
+SubirEscaleras.sayCooldown = 5000
+
+--
+-- MENSAJES
+--
+-- Nada de lo que escriba este mod en consola debe poder repetirse sin freno.
+-- console.txt es compartido: un mod que escupe una linea por tick tapa los
+-- errores de todos los demas y hace imposible diagnosticar nada.
+--
+
+--- Escribe en consola solo en modo debug.
+function SubirEscaleras.log(message)
+    if SubirEscaleras.debug then
+        print("[SubirEscaleras] " .. message)
+    end
+end
+
+local warned = {}
+
+--- Avisa de un problema una unica vez por partida, aunque se repita mil veces.
+function SubirEscaleras.warnOnce(id, message)
+    if warned[id] then return end
+    warned[id] = true
+    print("[SubirEscaleras] " .. message)
+end
+
+local lastSaid = {}
+
+--- Bocadillo con enfriamiento, para no repetir la misma frase sin parar.
+function SubirEscaleras.say(character, key)
+    if not character then return end
+
+    local ok, playerNum = pcall(function() return character:getPlayerNum() end)
+    local id = key .. "@" .. tostring(ok and playerNum or 0)
+
+    local now = getTimestampMs()
+    if lastSaid[id] and now - lastSaid[id] < SubirEscaleras.sayCooldown then
+        return
+    end
+    lastSaid[id] = now
+
+    character:Say(getText(key))
+end
+
+--
+-- ACCESO A LAS ESTADISTICAS
+--
+-- getStats():getEndurance() es la via de siempre. El acceso por
+-- CharacterStat.ENDURANCE se queda como alternativa: si esa tabla global no
+-- existe en la build que tenga el jugador, indexarla lanza un error, y este
+-- codigo corre al abrir el menu contextual y en cada tick de la accion. Un
+-- error ahi son cientos de trazas en consola, no una.
+--
+
+--- Aliento actual, de 0 (reventado) a 1 (descansado).
+function SubirEscaleras.getEndurance(character)
+    local ok, value = pcall(function() return character:getStats():getEndurance() end)
+    if ok and value then return value end
+
+    ok, value = pcall(function() return character:getStats():get(CharacterStat.ENDURANCE) end)
+    if ok and value then return value end
+
+    SubirEscaleras.warnOnce("endurance", "no se ha podido leer el aliento; se ignora ese limite")
+    return 1
+end
+
+--- Gasta aliento. Nunca baja de 0.
+function SubirEscaleras.spendEndurance(character, amount)
+    local ok = pcall(function()
+        local stats = character:getStats()
+        stats:setEndurance(math.max(0, stats:getEndurance() - amount))
+    end)
+    if ok then return end
+
+    ok = pcall(function()
+        character:getStats():remove(CharacterStat.ENDURANCE, amount)
+    end)
+    if ok then return end
+
+    SubirEscaleras.warnOnce("endurance_set", "no se ha podido gastar aliento al trepar")
+end
+
 --
 -- RED DE SEGURIDAD, no la via principal.
 --
@@ -75,6 +160,15 @@ SubirEscaleras.climbFlags = {
     W = IsoFlagType.climbSheetW,
 }
 
+-- Orden fijo en el que se prueban las direcciones.
+--
+-- IMPORTA, y mucho: antes se recorrian las tablas de arriba con pairs(), que en
+-- Lua no garantiza ningun orden. Una escalera con dos banderas climbSheet* (o
+-- dos propiedades ladder*, que las hay) devolvia una direccion u otra segun le
+-- diera, y con ella cambiaba la casilla por la que te bajabas. Ese es el
+-- "funciona a veces" que se ve desde fuera como que el mod va a saltos.
+local climbDirs = { "N", "S", "E", "W" }
+
 -- desplazamiento para bajarse de la escalera segun a que lado esta pegada
 local stepOff = {
     N = { 0, -1 },
@@ -110,11 +204,11 @@ function SubirEscaleras.getClimbDir(object)
     local props = object:getProperties()
 
     if props then
-        for dir, flag in pairs(SubirEscaleras.climbFlags) do
-            if props:has(flag) then return dir end
+        for _, dir in ipairs(climbDirs) do
+            if props:has(SubirEscaleras.climbFlags[dir]) then return dir end
         end
-        for dir, key in pairs(ladderKeys) do
-            if props:has(key) then return dir end
+        for _, dir in ipairs(climbDirs) do
+            if props:has(ladderKeys[dir]) then return dir end
         end
     end
 
@@ -182,7 +276,7 @@ function SubirEscaleras.canClimb(character, down)
         return false, "IGUI_SubirEscaleras_Pierna"
     end
 
-    local endurance = character:getStats():get(CharacterStat.ENDURANCE)
+    local endurance = SubirEscaleras.getEndurance(character)
     if endurance and endurance < SubirEscaleras.minEndurance then
         return false, "IGUI_SubirEscaleras_Agotado"
     end
@@ -242,12 +336,24 @@ function SubirEscaleras.findLanding(x, y, z, dir)
     local cell = getCell()
     local exact = cell:getGridSquare(x, y, z)
 
+    -- La propia casilla primero, luego el lado al que da la escalera y despues
+    -- el resto, siempre en el mismo orden. Con pairs() el orden lo decidia el
+    -- hash de la tabla, asi que la misma escalera te dejaba en un vecino
+    -- distinto cada vez que la usabas.
     local candidates = { { 0, 0 } }
-    if dir and stepOff[dir] then
-        table.insert(candidates, stepOff[dir])
-    end
-    for _, offset in pairs(stepOff) do
+    local used = { ["0,0"] = true }
+
+    local function addCandidate(offset)
+        if not offset then return end
+        local id = offset[1] .. "," .. offset[2]
+        if used[id] then return end
+        used[id] = true
         table.insert(candidates, offset)
+    end
+
+    addCandidate(dir and stepOff[dir])
+    for _, d in ipairs(climbDirs) do
+        addCandidate(stepOff[d])
     end
 
     -- Primera pasada: solo cuadros a los que de verdad se puede salir desde la
@@ -371,11 +477,9 @@ function SubirEscaleras.movePlayerTo(character, square)
     character:setY(y)
     character:setZ(z)
 
-    if SubirEscaleras.debug then
-        print(string.format("[SubirEscaleras] movido a %d,%d,%d teleportTo=%s pos=%.2f,%.2f,%.2f",
-            square:getX(), square:getY(), square:getZ(), tostring(ok),
-            character:getX(), character:getY(), character:getZ()))
-    end
+    SubirEscaleras.log(string.format("movido a %d,%d,%d teleportTo=%s pos=%.2f,%.2f,%.2f",
+        square:getX(), square:getY(), square:getZ(), tostring(ok),
+        character:getX(), character:getY(), character:getZ()))
 end
 
 --- Mueve al personaje y lo vigila un momento. Si acaba en un cuadro donde no
@@ -388,25 +492,47 @@ function SubirEscaleras.moveSafely(character, target, origin)
 
     local ticks = 0
     local watchdog
+
+    -- Todo el cuerpo va dentro de un pcall y el evento se suelta pase lo que
+    -- pase.
+    --
+    -- Antes no: si el personaje dejaba de ser valido (muere, se desconecta,
+    -- cambia de celda), character:isDead() lanzaba, el error subia desde el
+    -- handler y la linea que quita el evento no llegaba a ejecutarse. El
+    -- handler seguia enganchado y volvia a petar al tick siguiente. Se cortaba
+    -- solo a los 30 ticks, pero de casualidad: la condicion empieza por
+    -- ticks >= 30, y en cuanto se cumple Lua ya no evalua el isDead() que
+    -- petaba. O sea, 29 trazas completas en console.txt por cada salto fallido
+    -- en vez de ninguna, y bastaba con reordenar esa condicion para que no
+    -- parasen nunca.
     watchdog = function()
         ticks = ticks + 1
 
-        -- Si el personaje deja de ser valido (muere, se desconecta) hay que
-        -- soltar el evento YA: si no, cada tick lanza un error hasta agotar
-        -- la cuenta, y con varios jugadores eso son cientos de errores.
-        if ticks >= 30 or not character or character:isDead() then
-            Events.OnTick.Remove(watchdog)
-            return
-        end
+        local ok, done = pcall(function()
+            if ticks >= 30 or not character or character:isDead() then
+                return true
+            end
 
-        local square = character:getCurrentSquare()
+            local square = character:getCurrentSquare()
 
-        if square and not SubirEscaleras.isStandable(square) then
-            SubirEscaleras.movePlayerTo(character, origin)
-            print("[SubirEscaleras] destino inseguro, devuelto al punto de partida")
-            character:Say(getText("IGUI_SubirEscaleras_Inseguro"))
-            Events.OnTick.Remove(watchdog)
-            return
+            if square and not SubirEscaleras.isStandable(square) then
+                SubirEscaleras.movePlayerTo(character, origin)
+                SubirEscaleras.log("destino inseguro, devuelto al punto de partida")
+                SubirEscaleras.say(character, "IGUI_SubirEscaleras_Inseguro")
+                return true
+            end
+
+            return false
+        end)
+
+        if ok and not done then return end
+
+        Events.OnTick.Remove(watchdog)
+
+        if not ok then
+            SubirEscaleras.warnOnce("watchdog",
+                "la vigilancia post-salto fallo y se ha soltado; " ..
+                "activa SubirEscaleras.debug si se repite")
         end
     end
 
